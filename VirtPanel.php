@@ -43,6 +43,23 @@ class VirtPanel {
 		$username.= $array['service']['id'];
 		return $username;
 	}
+	function units2MB($units) {
+		$units = explode(' ', $units);
+		switch ($units[1]) {
+			case 'MB':
+				return floor($units[0]);
+			break;
+			case 'GB':
+				return floor($units[0] * 1024);
+			break;
+			case 'TB':
+				return floor($units[0] * 1024 * 1024);
+			break;
+			case 'PB':
+				return floor($units[0] * 1024 * 1024 * 1024);
+			break;
+		}
+	}
 	function user_cp($array) {
 		global $billic, $db;
 		$auth = $this->curl('api/login_auth.php?type=vm&username=' . urlencode($array['service']['username']));
@@ -124,7 +141,7 @@ class VirtPanel {
 		if (strtolower($vars['bandwidth']) == 'unlimited') {
 			$bandwidth = 'unlimited';
 		} else {
-			$bandwidth = round($billic->units2MB($bandwidth) / 1024);
+			$bandwidth = round($this->units2MB($bandwidth) / 1024);
 		}
 		$url = '/?vm&action=create';
 		$url.= '&type=' . urlencode($vars['server_type']);
@@ -138,8 +155,8 @@ class VirtPanel {
 		$url.= '&server=' . urlencode('(Automatic)');
 		$url.= '&server_pool=' . urlencode($vars['server_pool']);
 		$url.= '&create=create';
-		$url.= '&disk_quota=' . $billic->units2MB($vars['disk']);
-		$url.= '&memory=' . $billic->units2MB($vars['memory']);
+		$url.= '&disk_quota=' . $this->units2MB($vars['disk']);
+		$url.= '&memory=' . $this->units2MB($vars['memory']);
 		$url.= '&cpu_clock=' . urlencode($vars['cpu']);
 		$url.= '&cpu_num=' . urlencode($vars['cpu_cores']);
 		$url.= '&bandwidth=' . $bandwidth;
@@ -294,8 +311,8 @@ class VirtPanel {
 				if (empty($ram) || empty($disk) || empty($ipv4) || empty($pool)) {
 					continue;
 				}
-				$ram = $billic->units2MB($ram);
-				$disk = $billic->units2MB($disk);
+				$ram = $this->units2MB($ram);
+				$disk = $this->units2MB($disk);
 				if ($servers === null) {
 					$servers = $this->curl('/api/list_servers_full.php');
 					$servers = json_decode($servers, true);
