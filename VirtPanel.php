@@ -7,6 +7,8 @@ class VirtPanel {
 			'ipv6',
 			'server_pool',
 			'disk',
+			'disk_iops',
+			'disk_speed',
 			'memory',
 			'bandwidth',
 			'cpu',
@@ -62,46 +64,97 @@ class VirtPanel {
 	}
 	function user_cp($array) {
 		global $billic, $db;
-		$auth = $this->curl('api/login_auth.php?type=vm&username=' . urlencode($array['service']['username']));
-		if (!empty($params['serverip'])) {
-			$host = $params['serverip'];
-		} else {
-			$host = $params["serverhostname"];
+		/*$auth = $this->curl([
+			'api' => 'login_auth',
+			'type' => 'vm',
+			'vm' => $array['service']['username']
+		]);
+		if (strlen($auth['key'])!=64)
+			die('Failed to obtain login_auth key');*/
+		if (isset($_POST['reset-password'])) {
+			$newpass = $billic->rand_str(8);
+			$data = $this->curl([
+				'api' => 'vm_set_login_password',
+				'vm' => $array['service']['username'],
+				'new' => $newpass
+			]);
+			$array['service']['password'] = $billic->encrypt($newpass);
+			$db->q('UPDATE `services` SET `password` = ? WHERE `username` = ?', $array['service']['password'], $array['service']['username']);
 		}
-		echo '<div align="center"><a href="' . get_config('virtpanel_url') . '/?login&username=' . urlencode($array['service']['username']) . '&auth=' . urlencode($auth) . '" class="btn btn-primary btn-xl" target="_blank">&raquo; Click Here to access the Control Panel &laquo;</a></div>';
+		if (isset($_POST['reboot'])) {
+			$data = $this->curl([
+				'api' => 'vm_reboot',
+				'vm' => $array['service']['username']
+			]);
+		}
+		if (isset($_POST['shutdown'])) {
+			$data = $this->curl([
+				'api' => 'vm_shutdown',
+				'vm' => $array['service']['username']
+			]);
+		}
+		$vm = $this->curl([
+			'api' => 'vm',
+			'vm' => $array['service']['username']
+		]);
+		if (!is_array($vm)) {
+			die($vm);	
+		}
+		echo '<br>';
+		if (isset($_GET['Action'])&&$_GET['Action']=='ChangeOS') {
+			$templates = $this->curl([
+				'api' => 'templates'
+			]);
+			echo '<div class="row justify-content-md-center"><div class="col-xs-12 col-sm-6"><table class="table table-striped"><tr><th colspan="2">Install Server</th></tr><tr><td><form method="POST"><div align="center"><select name="template" class="form-control">';
+			foreach($templates['rows'] as $template) {
+				echo '<option value="'.safe($template['filename']).'">'.safe($template['desc']).'</option>';
+			}
+			echo '</select><br><input type="submit" name="install" value="Start Install" class="btn btn-success" onClick="return confirm(\'This will delete all of the data inside your server. Are you sure you want to continue?\');"></div></form></td></tr></table></div></div>';
+			return;
+		}
+		echo '<style>.btn-circle {
+    width: 16px;
+    height: 16px;
+    padding: 4px 0px;
+    border-radius: 8px;
+	cursor: default;
+}</style>';
+		echo '<div class="row">';
+		echo '<div class="col-xs-12 col-sm-4"><table class="table table-striped"><tr><th colspan="2">Connection Info</th></tr><tr><td>IP Address:</td><td>'.$vm['ip_connect'].'</td></tr><tr><td>Username:</td><td>'.$vm['os_user'].'</td></tr></table>
+		<br>
+		<form method="POST"><table class="table table-striped"><tr><th colspan="2">Control Panel Login Information</th></tr><tr><td width="150">URL</td><td><a href="'.get_config('virtpanel_url').'" target="_new">'.get_config('virtpanel_url').'</a></td></tr><tr><td>Username</td><td>'.$array['service']['username'].'</td></tr><tr><td>Password</td><td><span>'.$billic->decrypt($array['service']['password']).'</span>&nbsp;&nbsp;&nbsp;<input type="submit" name="reset-password" value="Reset Password" class="btn btn-sm btn-primary"></td></tr></table></form></div>';
+		echo '<div class="col-xs-12 col-sm-4"><form method="POST"><table class="table table-striped"><tr><th colspan="2">Power Control</th></tr><tr><td><button type="button" class="btn btn-'.($vm['status']=='running'?'success':'danger').' btn-circle"></button> '.ucwords($vm['status']).'<span style="float:right"><input type="submit" name="reboot" value="Reboot" class="btn btn-sm btn-success" onClick="return confirm(\'Are you sure you want to reboot the server?\')"> <input type="submit" name="shutdown" value="Shutdown" class="btn btn-sm btn-danger" onClick="return confirm(\'Are you sure you want to shutdown the server? The server will be inaccessible until it is started again.\')"></div></td></tr></table><br><table class="table table-striped"><tr><th colspan="2">Server Specs</th></tr><tr><td>Disk</td><td>'.round($vm['plan_disk_quota']/1024, 2).' GB</td></tr><tr><td>RAM</td><td>'.round($vm['plan_memory']/1024, 1).' GB</td></tr><tr><td>CPU</td><td>'.$vm['plan_cpu_num'].' core'.($vm['plan_cpu_num']>1?'s':'').'</td></tr><tr><td>Port Speed</td><td>'.round($vm['plan_port_speed']/1024/1024, 1).' Mbps</td></tr></table></form></div>';
+		$template = str_replace('.lzo', '', $vm['template']);
+		$template = str_replace('-', ' ', $template);
+		echo '<div class="col-xs-12 col-sm-4"><table class="table table-striped"><tr><th colspan="2">Operating System</th></tr><tr><td>'.$template.'</td></tr></table></div>';
+		echo '</div>';
 	}
 	function suspend($array) {
 		global $billic, $db;
 		$service = $array['service'];
-		$data = $this->curl('/?vm&action=view&vm=' . urlencode($service['username']) . '&subaction=suspend&full=true');
-		if (stripos($data, 'cURL error') !== false) {
-			return $data;
-		}
-		if (stripos($data, 'Successfully Updated') !== false || stripos($data, 'VPS does not exist') !== false) {
-			return true;
-		} else {
-			return $this->get_errors($data);
-		}
+		$data = $this->curl([
+			'api' => 'vm_suspend',
+			'vm' => $array['service']['username'],
+			'power' => 'true',
+			'wait' => 'true',
+		]);
+		if (is_array($data) && $data['status']=='ok') return true; else return $data;
 	}
 	function unsuspend($array) {
 		global $billic, $db;
-		$service = $array['service'];
-		$data = $this->curl('/?vm&action=view&vm=' . $service['username'] . '&subaction=unsuspend&full=true');
-		if (stripos($data, 'cURL error') !== false) {
-			return $data;
-		}
-		if (stripos($data, 'success') !== false || stripos($data, 'Account does not exist') !== false) {
-			return true;
-		} else {
-			return $this->get_errors($data);
-		}
+		$data = $this->curl([
+			'api' => 'vm_unsuspend',
+			'vm' => $array['service']['username'],
+			'power' => 'true',
+		]);
+		if (is_array($data) && ($data['status']=='ok' || isset($data['task']))) return true; else return $data;
 	}
 	function terminate($array) {
 		global $billic, $db;
 		$service = $array['service'];
 		//$this->getips($service);
 		if (get_config('virtpanel_url') == 'https://cp.servebyte.com') {
-			$ips = explode(',', $service['ipaddresses']);
+			$ips = explode(',', $array['service']['ipaddresses']);
 			foreach ($ips as $ip) {
 				$row = $db->q('SELECT * FROM `rdns` WHERE `ip` = ?', $ip);
 				$row = $row[0];
@@ -109,16 +162,13 @@ class VirtPanel {
 				$db->q('UPDATE `rdns` SET `hostname` = ?, `email_blocked` = ?, `update_email_block` = ? WHERE `zone` = ?', $hostname, 1, 1, $row['zone']);
 			}
 		}
-		$db->q('UPDATE `services` SET `ipaddresses` = ? WHERE `username` = ?', '', $service['username']);
-		$data = $this->curl('/?vm&vm[]=' . urlencode($service['username']) . '&delete=Delete');
-		if (stripos($data, 'cURL error') !== false) {
-			return $data;
-		}
-		if (stripos($data, 'Successfully Deleted') !== false || stripos($data, 'Account does not exist') !== false) {
-			return true;
-		} else {
-			return $this->get_errors($data);
-		}
+		$db->q('UPDATE `services` SET `ipaddresses` = ? WHERE `username` = ?', '', $array['service']['username']);
+		$data = $this->curl([
+			'api' => 'vm_delete',
+			'vm' => $array['service']['username'],
+			'wait' => 'yes',
+		]);
+		if (is_array($data) && $data['status']=='ok') return true; else return $data;
 	}
 	function create($array) {
 		global $billic, $db;
@@ -126,57 +176,38 @@ class VirtPanel {
 		$service = $array['service'];
 		$plan = $array['plan'];
 		$user_row = $array['user'];
-		if (empty($service['username'])) {
-			$username = $this->generate_service_username($array);
-		} else {
-			$username = $service['username'];
-		}
-		if (empty($service['password'])) {
-			$password = strtolower($billic->rand_str(10));
-		} else {
-			$password = $billic->decrypt($service['password']);
-		}
+		if (empty($service['username'])) $username = $this->generate_service_username($array); else $username = $service['username'];
+		if (empty($service['password'])) $password = strtolower($billic->rand_str(10)); else $password = $billic->decrypt($service['password']);
 		$db->q('UPDATE `services` SET `username` = ?, `password` = ? WHERE `id` = ?', $username, $billic->encrypt($password) , $service['id']);
-		$bandwidth = $vars['bandwidth'];
-		if (strtolower($vars['bandwidth']) == 'unlimited') {
-			$bandwidth = 'unlimited';
-		} else {
-			$bandwidth = round($this->units2MB($bandwidth) / 1024);
-		}
-		$url = '/?vm&action=create';
-		$url.= '&type=' . urlencode($vars['server_type']);
-		$url.= '&username=' . urlencode($username);
-		$url.= '&password=' . urlencode($password);
-		$url.= '&email=' . urlencode($user_row['email']);
-		$url.= '&hostname=' . urlencode($service['domain']);
-		$url.= '&plan=' . urlencode('-custom-');
-		$url.= '&ip_addresses_from_pool=' . urlencode($vars['ipv4']);
-		$url.= '&ipv6=' . urlencode($vars['ipv6']);
-		$url.= '&server=' . urlencode('(Automatic)');
-		$url.= '&server_pool=' . urlencode($vars['server_pool']);
-		$url.= '&create=create';
-		$url.= '&disk_quota=' . $this->units2MB($vars['disk']);
-		$url.= '&memory=' . $this->units2MB($vars['memory']);
-		$url.= '&cpu_clock=' . urlencode($vars['cpu']);
-		$url.= '&cpu_num=' . urlencode($vars['cpu_cores']);
-		$url.= '&bandwidth=' . $bandwidth;
-		$url.= '&port_speed=' . urlencode($vars['port_speed'] * 1024);
-		$url.= '&allow_rebuild=1';
-		$url.= '&domains=' . urlencode($vars['max_domains']);
-		if (!empty($vars['template'])) {
-			$url.= '&template=' . urlencode($vars['template']);
-		}
-		$url.= '&continue=1';
-		$data = $this->curl($url);
-		if (stripos($data, 'cURL error') !== false) {
-			return $data;
-		}
-		if (stripos($data, 'CREATED_SUCCESSFULLY') !== false) {
+		$post = [
+			'api' => 'vm_create',
+			'type' => $vars['server_type'],
+			'username' => $username,
+			'password' => $password,
+			'email' => $user_row['email'],
+			'hostname' => $service['domain'],
+			'plan' => '-custom-',
+			'ipv4' => $vars['ipv4'],
+			'ipv6' => $vars['ipv6'],
+			'server' => '(Automatic)',
+			'server_pool' => $vars['server_pool'],
+			'disk' => $this->units2MB($vars['disk'])/1024,
+			'disk_iops' => $vars['disk_iops'],
+			'disk_speed' => $vars['disk_speed'],
+			'memory' => $this->units2MB($vars['memory'])/1024,
+			'cpu_clock' => $vars['cpu'],
+			'cpu_cores' => $vars['cpu_cores'],
+			'bandwidth' => $this->units2MB($vars['bandwidth'])/1024/1024,
+			'port_speed' =>  $vars['port_speed'],
+			'allowed_templates' => 'ALL',
+			'template' => $vars['template'],
+		];
+		$data = $this->curl($post);
+		if (is_array($data) && $data['status']=='ok') {
 			$this->getips($service);
 			return true;
-		} else {
-			return $this->get_errors($data);
 		}
+		return $data;
 	}
 	function ordercheck($array) {
 		global $billic, $db;
@@ -190,7 +221,7 @@ class VirtPanel {
 		return $vars['domain']; // return the domain for the service to be called
 		
 	}
-	function curl($action) {
+	function curl($post) {
 		if ($this->ch === null) {
 			$this->ch = curl_init();
 			curl_setopt_array($this->ch, array(
@@ -200,38 +231,41 @@ class VirtPanel {
 				CURLOPT_ENCODING => "",
 				CURLOPT_USERAGENT => "Curl/Billic",
 				CURLOPT_AUTOREFERER => true,
-				CURLOPT_CONNECTTIMEOUT => 5,
-				CURLOPT_TIMEOUT => 60,
+				CURLOPT_CONNECTTIMEOUT => 15,
+				CURLOPT_TIMEOUT => 30,
 				CURLOPT_MAXREDIRS => 5,
 				CURLOPT_SSL_VERIFYHOST => false,
 				CURLOPT_SSL_VERIFYPEER => true,
+				CURLOPT_POST => true,
 			));
 		}
-		if (preg_match('/\?/', $action)) {
-			$next = '&';
-		} else {
-			$next = '?';
-		}
-		curl_setopt($this->ch, CURLOPT_URL, get_config('virtpanel_url') . '/' . $action . $next . 'apikey=' . urlencode(get_config('virtpanel_apikey')));
-		$data = curl_exec($this->ch);
-		if (curl_errno($this->ch) > 0) {
+		$post['apikey'] = get_config('virtpanel_apikey');
+		curl_setopt($this->ch, CURLOPT_POSTFIELDS, $post);
+		curl_setopt($this->ch, CURLOPT_URL, get_config('virtpanel_url') . '/api.php');
+		$json = curl_exec($this->ch);
+		if (curl_errno($this->ch) > 0)
 			return 'Curl error: ' . curl_error($this->ch);
-		}
-		$data = trim($data);
+		$data = json_decode($json, true);
+		if (!is_array($data)) return 'Invalid response from API: '.$json;
+		if (!empty($data['error'])) return $data['error'];
 		return $data;
 	}
 	function getips($service) {
 		global $billic, $db;
-		$data_ip = $this->curl('/api/get_ip.php?username=' . urlencode($service['username']));
-		$ips = explode(PHP_EOL, $data_ip);
+		$vm = $this->curl([
+			'api' => 'vm',
+			'username' => $service['username'],
+		]);
+		$ips = explode(',', $service['ipaddresses']);
 		$ip_list = '';
 		foreach ($ips as $ip) {
-			if (!$this->is_ip_address($ip)) {
-				return 'Failed to get IP Addresses';
-			}
-			$ip_list.= $ip . ', ';
+			if (!$this->is_ip_address($ip)) continue;
+			$ip_list.= $ip.', ';
 		}
 		$ip_list = substr($ip_list, 0, -2);
+		foreach($vm['ipv6'] as $ipv6) {
+			$ip_list.= $ipv6['block'].'/'.$block['cidr'].', ';
+		}
 		$db->q('UPDATE `services` SET `ipaddresses` = ? WHERE `id` = ?', $ip_list, $service['id']);
 	}
 	function is_ip_address($ip_address) {
@@ -251,40 +285,35 @@ class VirtPanel {
 		global $billic, $db;
 		$plan = $db->q('SELECT * FROM `plans` WHERE `id` = ?', $service['packageid']);
 		$plan = $plan[0];
-		$data = $this->curl('/?vm&action=view&vm=' . urlencode($service['username']) . '&subaction=limits' . '&disk_quota=' . urlencode($plan['disk'] * 1024) . '&memory=' . urlencode($plan['memory'] * 1024) . '&cpu_clock=0' . '&cpu_clock=' . urlencode($plan['cpu']) . '&cpu_num=' . urlencode($plan['cpu_cores']) . '&bandwidth=' . urlencode($plan['bandwidth']) . '&port_speed=' . urlencode($plan['port_speed'] * 1024) . '&continue=1');
-		if (stripos($data, 'cURL error') !== false) {
-			return $data;
+		$limits = [
+			'disk_quota' => $plan['disk'],
+			'memory' => $plan['memory'],
+			'cpu_clock' => $plan['cpu'],
+			'cpu_num' => $plan['cpu_cores'],
+			'bandwidth' => $plan['bandwidth'],
+			'port_speed' => $plan['port_speed'],
+		];
+		foreach($limits as $limit => $val) {
+			$data = $this->curl([
+				'api' => 'vm_save',
+				'vm' => $service['username'],
+				'setting' => $limit,
+				'value' => $val,
+			]);
+			if (is_array($data) && $data['status']=='ok') return true; else return $data;
 		}
-		if (stripos($data, 'Successfully Updated') !== false || stripos($data, 'VPS does not exist') !== false) {
-			return true;
-		} else {
-			return $this->get_errors($data);
-		}
+		return true;
 	}
-	function get_errors($data) {
-		global $billic, $db;
-		preg_match_all('~<error>(.*?)</error>~', $data, $matches);
-		$errors = implode('<br>', $matches[1]);
-		preg_match('~<b>Fatal Error:</b> (.*)~', $data, $match);
-		$errors.= $match[1];
-		if (stripos($data, 'Task in progress') !== false) {
-			$errors.= 'A task is already in progress';
-		}
-		if (empty($errors)) {
-			$errors = curl_error($this->ch);
-		}
-		if (empty($errors)) {
-			$errors = strip_tags($data);
-		}
-		return $errors;
+	function nbsp($txt) {
+		return str_replace(' ', '&nbsp;', $txt);
 	}
 	function service_info($params) {
 		$ret = '';
-		if (!empty($params['service']['ipaddresses'])) {
-			$ret.= 'IP: ' . $params['service']['ipaddresses'] . '<br>';
-		}
 		if (!empty($params['vars']['memory'])) {
-			$ret.= 'RAM: ' . $params['vars']['memory'] . '<br>Disk: ' . $params['vars']['disk'] . '<br>Bandwidth: ' . $params['vars']['bandwidth'] . ' @' . $params['vars']['port_speed'] . ' Mbps<br>CPU: ' . $params['vars']['cpu'] . '% of ' . $params['vars']['cpu_cores'] . ' Core' . ($params['vars']['cpu_cores'] > 1 ? 's' : '') . '<br>IPv4: ' . $params['vars']['ipv4'] . '<br>IPv6: ' . $params['vars']['ipv6'];
+			$ret.= $this->nbsp('RAM: ' . $params['vars']['memory'] . '<br>Disk: ' . $params['vars']['disk'] . '<br>Bandwidth: ' . $params['vars']['bandwidth'] . ' @' . $params['vars']['port_speed'] . ' Mbps<br>CPU: ' . $params['vars']['cpu'] . '% of ' . $params['vars']['cpu_cores'] . ' Core' . ($params['vars']['cpu_cores'] > 1 ? 's' : '') . '<br>IPv4: ' . $params['vars']['ipv4'] . '<br>IPv6: ' . $params['vars']['ipv6'].'<br>');
+		}
+		if (!empty($params['service']['ipaddresses'])) {
+			$ret.= '<u>IP Addresses</u><br>' . str_replace(',', '<br>', $params['service']['ipaddresses']);
 		}
 		return $ret;
 	}
@@ -314,11 +343,10 @@ class VirtPanel {
 				$ram = $this->units2MB($ram);
 				$disk = $this->units2MB($disk);
 				if ($servers === null) {
-					$servers = $this->curl('/api/list_servers_full.php');
-					$servers = json_decode($servers, true);
-					if (!is_array($servers)) {
-						return;
-					}
+					$servers = $this->curl([
+						'api' => 'servers',
+					]);
+					$servers = $servers['rows'];
 				}
 				$t1 = 0;
 				$t2 = 0;
